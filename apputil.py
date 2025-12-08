@@ -1,112 +1,83 @@
-import os
-from typing import Any, Dict, List, Optional
+# your code here ...
 
 import requests
 import pandas as pd
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
-
-
 class Genius:
-    BASE_URL = "https://api.genius.com"
+    def __init__(self, access_token):
+        self.access_token = access_token
+        self.base_url = "https://api.genius.com"
+        self.headers = {
+            "Authorization": f"Bearer {self.access_token}"
+        }
 
-    def __init__(self, access_token: Optional[str] = None) -> None:
-        """Initialize Genius helper. Token from env var GENIUS_ACCESS_TOKEN if not provided."""
-        self.access_token = access_token or os.getenv("GENIUS_ACCESS_TOKEN")
-        if not self.access_token:
-            raise ValueError("Genius access token required. Set GENIUS_ACCESS_TOKEN or pass access_token.")
-        self.headers = {"Authorization": f"Bearer {self.access_token}"}
-
-    def _get_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        url = f"{self.BASE_URL}{path}"
-        resp = requests.get(url, headers=self.headers, params=params, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-
-    # ------------------------------------------------------------
-    # ✔ FIXED get_artist() that passes Autograder Test 2
-    # ------------------------------------------------------------
-    def get_artist(self, search_term: str) -> Optional[Dict[str, Any]]:
+    def search(self, search_term):
         """
-        Search for search_term and return the artist dict for the most-likely hit.
-        Works with both real API and simplified autograder mock JSON.
+        Exercise 1:
+        Search Genius API for songs matching the search_term.
+        Returns the JSON response dictionary.
         """
-        search_json = self._get_json("/search", params={"q": search_term})
-        if not search_json:
-            return None
+        url = f"{self.base_url}/search"
+        params = {"q": search_term}
+        response = requests.get(url, headers=self.headers, params=params)
+        response.raise_for_status()
+        return response.json()
 
-        # Autograder sometimes removes "response", so fallback to top-level
-        response_block = search_json.get("response", search_json)
+    def get_artist(self, search_term):
+        """
+        Exercise 2:
+        Get detailed artist info for the primary artist found
+        in the first hit of the search_term.
+        Returns the JSON response dictionary of artist info.
+        """
+        # Search first to get artist ID
+        search_results = self.search(search_term)
+        hits = search_results.get("response", {}).get("hits", [])
 
-        # Autograder places hits at top-level, so fallback
-        hits = response_block.get("hits", [])
         if not hits:
-            return None
+            raise ValueError(f"No results found for '{search_term}'")
 
-        # Extract primary artist ID safely
-        first_hit = hits[0].get("result", {})
-        primary = first_hit.get("primary_artist") or first_hit.get("artist")
+        # Extract the primary artist ID from the first hit
+        primary_artist = hits[0].get("result", {}).get("primary_artist", {})
+        artist_id = primary_artist.get("id")
 
-        if not primary or not primary.get("id"):
-            return None
+        if not artist_id:
+            raise ValueError(f"No primary artist found for '{search_term}'")
 
-        artist_id = primary["id"]
+        # Use the artist ID to get detailed artist info
+        artist_url = f"{self.base_url}/artists/{artist_id}"
+        response = requests.get(artist_url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
 
-        # Get artist details
-        artist_json = self._get_json(f"/artists/{artist_id}")
-        if not artist_json:
-            return None
-
-        # Again: autograder might not include "response"
-        artist_block = artist_json.get("response", artist_json)
-
-        return artist_block.get("artist")
-
-    # ------------------------------------------------------------
-    # get_artists() remains unchanged
-    # ------------------------------------------------------------
-    def get_artists(self, search_terms: List[str]) -> pd.DataFrame:
+    def get_artists(self, search_terms):
+        """
+        Exercise 3:
+        Takes a list of search terms and returns a DataFrame with:
+        - search_term
+        - artist_name
+        - artist_id
+        - followers_count (if available)
+        """
         rows = []
         for term in search_terms:
             try:
-                artist = self.get_artist(term)
-            except requests.HTTPError:
-                artist = None
+                artist_data = self.get_artist(term)
+                artist_info = artist_data.get("response", {}).get("artist", {})
 
-            if artist:
-                name = artist.get("name")
-                artist_id = artist.get("id")
-                followers = (
-                    artist.get("followers_count")
-                    or artist.get("followers")
-                    or artist.get("stats", {}).get("followers")
-                )
-            else:
-                name = None
-                artist_id = None
-                followers = None
-
-            rows.append(
-                {
+                rows.append({
                     "search_term": term,
-                    "artist_name": name,
-                    "artist_id": artist_id,
-                    "followers_count": followers,
-                }
-            )
+                    "artist_name": artist_info.get("name"),
+                    "artist_id": artist_info.get("id"),
+                    "followers_count": artist_info.get("followers_count", None)
+                })
+            except Exception as e:
+                rows.append({
+                    "search_term": term,
+                    "artist_name": None,
+                    "artist_id": None,
+                    "followers_count": None
+                })
+                print(f"Warning: Could not get artist info for '{term}'. Error: {e}")
 
-        return pd.DataFrame(rows, columns=["search_term", "artist_name", "artist_id", "followers_count"])
-
-
-if __name__ == "__main__":
-    token = os.getenv("GENIUS_ACCESS_TOKEN")
-    if not token:
-        print("Set GENIUS_ACCESS_TOKEN in env or use Genius(access_token='...')")
-    else:
-        g = Genius()
-        print(g.get_artist("Radiohead"))
-        print(g.get_artists(["Rihanna", "Tycho", "Seal", "U2"]))
+        return pd.DataFrame(rows)
